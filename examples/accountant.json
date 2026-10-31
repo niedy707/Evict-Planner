@@ -1,0 +1,37 @@
+{
+  "_about": [
+    "Example policy for an accounting office. Illustrative, not a tested configuration.",
+    "Layout: Clients/<Client>/<YYYY>/{Invoices,Bank,Payroll,Returns,Scans}/",
+    "Calendars: 'deadlines' (recurring filing dates per client — recurrences must be expanded),",
+    "'meetings' (client meetings), 'audits' (inspections that need several past years).",
+    "{year} is replaced with the current year when the policy is loaded, {year-1} with the previous one.",
+    "Client data is sensitive: the ICS links are secrets, and notifications carry counts, never client names."
+  ],
+  "roots": ["~/Library/Mobile Documents/com~apple~CloudDocs/Office"],
+  "calendars": [
+    { "name": "deadlines", "source": "ics", "url": "<private ICS link>",
+      "lead_days": 10, "tail_days": 3,
+      "match": { "by": "lookup-csv", "file": "client-calendar-map.csv" } },
+    { "name": "meetings",  "source": "ics", "url": "<private ICS link>",
+      "lead_days": 3, "tail_days": 2,
+      "match": { "by": "title-contains-folder" } },
+    { "name": "audits",    "source": "ics", "url": "<private ICS link>",
+      "lead_days": 14, "tail_days": 30,
+      "match": { "by": "folder-in-notes", "prefix": "client:" } }
+  ],
+  "rules": [
+    { "pattern": "Templates/**",           "action": "keep" },
+    { "pattern": "**/*.{txt,csv}",         "action": "keep", "note": "Tiny, and the first thing you search." },
+    { "pattern": "Clients/*/{year}/**",    "action": "keep", "note": "The current year of every client is always local." },
+
+    { "calendar": "deadlines", "inside": "{year-1}/**", "action": "keep",
+      "note": "Last year comes back around each filing deadline (annual returns, corrections)." },
+    { "calendar": "meetings",  "inside": "{year-1}/**", "action": "keep" },
+    { "calendar": "audits",    "action": "keep", "note": "An audit needs every year of that one client." },
+
+    { "pattern": "Clients/**", "min_size_mb": 1, "action": "evict", "min_age_days": 400,
+      "note": "Older years go back to the cloud. Files under 1 MB stay: evicting them frees almost nothing." }
+  ],
+  "max_evict_gb_per_run": 50,
+  "min_free_gb": 60
+}

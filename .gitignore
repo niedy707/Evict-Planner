@@ -1,0 +1,21 @@
+__pycache__/
+.DS_Store
+
+# Yerel kurulum: kişisel kural dosyası ve taşıma kaydı depoya girmez
+kurallar.json
+log.txt
+
+# Yerel betik: güvenlik açıkları kapanana kadar yayınlanmaz (TODO.md → "evict_planner.py güvenlik açıkları")
+evict_planner.py
+
+# İç notlar depoya girmez (ekosistem kuralı)
+TODO.md
+COZUMLER.md
+CLAUDE.md
+.claude/
+
+# İç raporlar (raporla / denetle / tara) — public depoya girmez
+*_rapor*.md
+*_denetim*.md
+*_tara*.md
+*_tara*.json

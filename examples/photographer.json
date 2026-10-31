@@ -1,0 +1,32 @@
+{
+  "_about": [
+    "Example policy for a professional photographer. Illustrative, not a tested configuration.",
+    "Layout: Shoots/<YYYY-MM-DD> <Client> <Type>/{RAW,Selects,Export}/ with .xmp sidecars next to the RAW files.",
+    "The catalog (e.g. a Lightroom Classic .lrcat and its previews) lives on the internal disk, outside the synced root.",
+    "The shoot date in the folder name opens the culling/editing window; a 'delivery' calendar adds",
+    "gallery delivery and album proofing dates; a Finder tag 'Portfolio' marks images that always stay."
+  ],
+  "roots": ["~/Library/Mobile Documents/com~apple~CloudDocs/Photo"],
+  "calendars": [
+    { "name": "delivery", "source": "ics", "url": "<private ICS link>",
+      "lead_days": 3, "tail_days": 7,
+      "match": { "by": "folder-in-notes", "prefix": "shoot:" } }
+  ],
+  "rules": [
+    { "pattern": "**/*.xmp",      "action": "keep", "note": "Sidecars hold the edits and are a few KB each." },
+    { "tag": "Portfolio",         "action": "keep" },
+    { "pattern": "**/Selects/**", "action": "keep", "note": "The picks are what clients ask for again." },
+
+    { "pattern": "Shoots/*/**", "date_from_name": { "lead_days": 1, "tail_days": 21 }, "action": "keep",
+      "note": "From the day before the shoot until three weeks after: import, cull, edit." },
+    { "calendar": "delivery", "action": "keep",
+      "note": "Gallery delivery, album proofing, print orders: the whole shoot comes back for a few days." },
+
+    { "pattern": "**/RAW/**",     "action": "evict", "min_age_days": 30,
+      "note": "A wedding is often 100 GB or more of RAW. With Smart Previews you can still edit after the originals leave." },
+    { "pattern": "**/Export/**",  "action": "evict", "min_age_days": 90 },
+    { "pattern": "Archive/**",    "action": "evict" }
+  ],
+  "max_evict_gb_per_run": 150,
+  "min_free_gb": 100
+}

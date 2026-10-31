@@ -1,0 +1,35 @@
+{
+  "_about": [
+    "Example policy for a social media content creator. Illustrative, not a tested configuration.",
+    "Layout: Content/<YYYY-MM-DD> <slug>/{Raw,Edit,Export,Thumbnail}/ — the folder date is the planned posting date.",
+    "Library/{B-roll,Music,SFX}/, Brand/, Templates/.",
+    "No calendar is strictly needed for posts: the date in the folder name opens the window.",
+    "A 'deals' calendar adds brand-deal review dates; a Finder tag 'Evergreen' marks reusable B-roll."
+  ],
+  "roots": ["~/Library/Mobile Documents/com~apple~CloudDocs/Creator"],
+  "calendars": [
+    { "name": "deals", "source": "ics", "url": "<private ICS link>",
+      "lead_days": 3, "tail_days": 14,
+      "match": { "by": "title-contains-folder" } }
+  ],
+  "rules": [
+    { "pattern": "Brand/**",     "action": "keep", "note": "Logos, fonts, colour palettes: small and used daily." },
+    { "pattern": "Templates/**", "action": "keep" },
+    { "pattern": "**/*.cube",    "action": "keep", "note": "LUTs." },
+    { "pattern": "**/Thumbnail/**", "action": "keep", "note": "Tiny; handy when re-posting or answering comments." },
+    { "tag": "Evergreen",        "action": "keep", "note": "B-roll you reuse every week stays local regardless of age." },
+    { "pattern": "Library/Music/**", "action": "keep" },
+
+    { "pattern": "Content/*/**", "date_from_name": { "lead_days": 7, "tail_days": 3 }, "action": "keep",
+      "note": "A post folder dated 2026-11-12 is local from 5 Nov to 15 Nov: shoot, edit, post, first replies." },
+    { "calendar": "deals", "action": "keep", "note": "Sponsor review rounds need the exact cut at hand." },
+
+    { "pattern": "Content/**/Raw/**",    "action": "evict", "min_age_days": 14 },
+    { "pattern": "Content/**/Export/**", "action": "evict", "min_age_days": 30,
+      "note": "Exports stay a month for cross-posting to other platforms." },
+    { "pattern": "Library/B-roll/**",    "action": "evict", "min_age_days": 90 },
+    { "pattern": "Content/**",           "action": "evict", "min_age_days": 45 }
+  ],
+  "max_evict_gb_per_run": 100,
+  "min_free_gb": 80
+}

@@ -1,0 +1,37 @@
+{
+  "_about": [
+    "Example policy for a freelance video editor. Illustrative, not a tested configuration.",
+    "Layout: Projects/<YYYY-MM> <Client> <Project>/{Footage,Proxies,Audio,Graphics,Project,Exports}/",
+    "Calendars: 'edit' (edit and colour sessions), 'delivery' (client review and final delivery).",
+    "Event notes carry the folder name as 'folder: 2026-11 Acme Brand Film'."
+  ],
+  "roots": ["~/Library/Mobile Documents/com~apple~CloudDocs/Studio"],
+  "calendars": [
+    { "name": "edit",     "source": "ics", "url": "<private ICS link>",
+      "lead_days": 2, "tail_days": 7,
+      "match": { "by": "folder-in-notes", "prefix": "folder:" } },
+    { "name": "delivery", "source": "ics", "url": "<private ICS link>",
+      "lead_days": 1, "tail_days": 30,
+      "match": { "by": "folder-in-notes", "prefix": "folder:" } }
+  ],
+  "rules": [
+    { "pattern": "**/*.fcpbundle/**", "action": "keep",
+      "note": "Editing libraries are databases. Never evict inside them; better, keep them out of synced folders." },
+    { "pattern": "**/*.{prproj,drp,aep}", "action": "keep", "note": "Project files are small and opened every day." },
+    { "pattern": "**/Proxies/**",  "action": "keep",
+      "note": "Proxies let you keep cutting while the camera originals are back in the cloud." },
+    { "pattern": "**/Graphics/**", "action": "keep" },
+    { "pattern": "**/Audio/**",    "action": "keep", "note": "Usually small next to the footage." },
+
+    { "calendar": "edit",     "action": "keep", "note": "The whole project folder, 2 days before the session until 7 days after." },
+    { "calendar": "delivery", "inside": "Exports/**", "action": "keep",
+      "note": "Masters stay at hand for re-delivery requests during the 30 days after delivery." },
+
+    { "pattern": "**/Footage/**",  "action": "evict", "min_age_days": 14,
+      "note": "Camera originals are the bulk: roughly 300 GB per hour of 4K ProRes 422 HQ." },
+    { "pattern": "**/Exports/**",  "action": "evict", "min_age_days": 60 },
+    { "pattern": "Archive/**",     "action": "evict" }
+  ],
+  "max_evict_gb_per_run": 200,
+  "min_free_gb": 150
+}
