@@ -318,12 +318,25 @@ bir şeyin tek kopyasını siler ya da başarı raporlarken sessizce hiçbir şe
 | **Bilinmeyeni karantinaya al** | Yeni bir dosya adı türü (yeni bir önek, yeni bir uzantı) birkaç gün evict edilmez ve sana haber verilir. |
 | **Ağ farkındalığı** | NAS'a yalnız ev ağında yedekle; ev ağını bir kafedeki modemin de dağıtabileceği IP'yle değil, NAS'ın **MAC adresiyle** tanı. Telefon hotspot'unda ağır işi atla. |
 | **Uykuya dayanıklı zamanlama** | `launchd` ile `StartCalendarInterval` (uykuda kaçan koşu uyanınca telafi edilir) ve koşunun çevresinde `caffeinate -i`. Bir ölü adam anahtarı ekle: "3 gündür başarılı koşu yok" da bir uyarıdır. |
+| **Kalıcı ve bilinen hatalar ayrı bir sınıftır** | Bazı dosyalar hiç yedeklenemez (bkz. *Sınırlar*: iCloud'un indirmediği etiketli dosyalar). "Bekleyen" sayılırlarsa hiçbir koşu başarılı olmaz: kısa yeniden deneme aralığı devreye girer, her koşu uyarı gönderir, birkaç gün sonra ölü adam anahtarı her gün öter — gerçek bir arıza bu gürültüde kaybolur. Onları ayrı say, göstermeye devam et, yalnız sayıları **artınca** uyar. |
 | **İçeriksiz bildirim** | Özet "412 dosya, 38 GB evict edildi" der; hangi müşteri ya da proje olduğunu söylemez. Bildirim servisleri üçüncü taraftır. |
 
 ### NAS'a özgü tuzaklar
 
 - **Büyük/küçük harf ve dil katlaması farklıdır.** Bir SMB sunucusu iki adı aynı dosya sayarken APFS
-  farklı sayabilir (ör. Türkçe `ı`/`I`). Kopyalamadan önce bu çakışmaları yakala.
+  farklı sayabilir (ör. Türkçe `ı`/`I`: APFS `ı`'yı katlamaz, büyük harfle karşılaştıran bir Samba sunucusu
+  katlar). macOS SMB istemcisi ikinci adı "yok" gösterir ama yazma ilk dosyaya gider; böylece her koşu bir
+  dosyayı ötekinin üstüne yazar ve doğrulama hiç geçmez. Kopyalamadan önce bu çakışmaları yakala (her klasörde
+  NFC'ye çevrilmiş, büyük harfli ada göre grupla), ikinci dosyayı bir takma adla gönder (`--files-from` yeniden
+  adlandıramaz — onu tek başına kopyala) ve takma adı manifeste yaz ki doğrulama, evict ve taşıma takibi onu kullansın.
+- **NAS'ta aynı anda tek ağır iş.** Aynı SMB sunucusundaki ikinci bir iş — md5 bile yapmayan, yalnız listeleyip
+  yeniden adlandıran — yüklemeyi yaklaşık 26 MB/sn'den 2–4 MB/sn'ye düşürdü; iş duraklatılınca hız hemen geri
+  geldi. Bunu bir notla değil kodla sağla (yan işin kontrol edip yol verdiği ortak bir kilit).
+- **Yalnız bulutta duran dosyaları yedeklemek bir boru hattıdır.** Evict edilmiş dosyalar kopyalanmadan önce
+  iCloud'dan inmelidir. Partilerle çalış (ör. 20 GB): *n*. parti md5'lenip kopyalanırken *n + 1*. partiyi indir,
+  sonra *n*. partiyi arka planda birkaç işçiyle yeniden evict et. Dosyaları tek tek yeniden evict etmek (dosya
+  başına ~0,5 sn) NAS'ı her partide 20–35 dakika boş bıraktı; 8 işçi yaklaşık 6 kat hızlıydı. Yeniden evict
+  hiçbir şey yüklemez — yalnız yerel kopyayı atar.
 - **`rsync --files-from`** `#` ile başlayan satırları yorum sayar. Her yolun başına `./` koy.
 - **rsync 3.x kullan** (ör. Homebrew'dan). macOS'la gelen `rsync` aslında `openrsync`'tir ve yalnız eski
   2.6.9 protokolünü konuşur.
@@ -342,6 +355,7 @@ bir şeyin tek kopyasını siler ya da başarı raporlarken sessizce hiçbir şe
 | Tam yüklendi mi? | Yukarıdaki Foundation URL kaynak anahtarları. Python'dan bağımlılıksız: `osascript -l JavaScript` + `ObjC.import("Foundation")`, tek çağrıda çok yol |
 | Evict | `brctl evict <yol>` ya da `FileManager.evictUbiquitousItem(at:)` |
 | İndir | `brctl download <yol>` ya da `FileManager.startDownloadingUbiquitousItem(at:)` |
+| iCloud bunu hiç indirir mi? | Evict edilmiş dosyada `com.apple.macl` xattr'ı; `getxattr` ile oku (dosyayı açmaz, indirme tetiklemez) — bkz. *Sınırlar* |
 | Pinli mi (İndirilmiş Tut)? | Öğenin kendisinde ya da bir üst klasörde `com.apple.fileprovider.pinned#PX` xattr'ı |
 | Finder etiketleri | `com.apple.metadata:_kMDItemUserTags` xattr'ı (etiket adlarından oluşan ikili bir plist) |
 | Bir uygulama açık tutuyor mu? | yol üzerinde `lsof` |
@@ -438,6 +452,16 @@ Bu sırayla kur ve bir sonrakine geçmeden her adımla birkaç gün yaşa:
 - Fotoğraflar kütüphanesi ayrı bir dünyadır; onun için Fotoğraflar'ın kendi "Mac Depolamasını Optimize
   Et" ayarını kullan.
 - `brctl` belgelenmemiştir; davranışı macOS sürümleri arasında değişebilir.
+- **Bazı evict'li dosyalar geri inmez.** `com.apple.macl` xattr'ını taşıyan dosyalar (korumalı alanda çalışan
+  bir uygulama dosyayı kaydettiğinde ya da dosya ona verildiğinde macOS koyar) takıldı: `brctl download` ve
+  `startDownloadingUbiquitousItem` hatasız döndü ama hiçbir şey inmedi; dosyayı okumak `EPERM` verdi. Takılan
+  dosyaların %76'sında etiket vardı, rastgele bir örneklemde %5'inde; arşivin toplamda yaklaşık %2'si.
+  **Ekranın durumu ve dosyanın kaynağı belirleyici:** ekran kilitliyken yapılan küçük denemede 3 dosyanın hiçbiri inmedi; kilit açıkken AirDrop,
+  Önizleme, Fotoğraflar, ekran görüntüsü kaynaklı ya da karantina kaydı olmayan etiketli dosyaların hepsi indi
+  (32/32), korumalı alanda çalışan bir mesajlaşma uygulamasının kaydettikleri ise çoğunlukla inmedi (2/11).
+  Yani: kaynağı `com.apple.quarantine`'den oku (üçüncü alan uygulamanın adıdır), etiketli dosyaları yalnız ekran
+  açıkken dene, inatçı olanları kuyruğa koyma (her biri zaman aşımı boyunca bir indirme yerini tıkar), ayrı
+  raporla ve eski bağımsız bir kopyayı erişilebilir tek kopya olabilir diye koru.
 - Pencere ancak takvim doğruysa işe yarar. Unutulmuş bir etkinlik, o gün indirme beklemek demektir.
 
 ## Benzer çalışmalar (31.10.2026'da bakıldı)

@@ -313,12 +313,26 @@ eventually either delete the only copy of something or quietly do nothing while 
 | **Quarantine the unknown** | A new kind of file name (a new prefix, a new extension) is not evicted for a few days, and you are told about it. |
 | **Network awareness** | Back up to the NAS only on the home network, identified by the NAS's **MAC address**, not by an IP that a café router may also hand out. Skip heavy work on a phone hotspot. |
 | **Sleep-safe scheduling** | `launchd` with `StartCalendarInterval` (runs missed while asleep are caught up) and `caffeinate -i` around the run. Add a dead-man switch: "no successful run for 3 days" is also an alert. |
+| **Known-permanent failures are their own class** | Some files can never be backed up (see *Limits*: tagged files iCloud will not download). If they count as "pending", no run ever succeeds: the short retry interval kicks in, every run sends a warning, and after a few days the dead-man switch fires daily — a real failure would drown in that noise. Count them separately, keep showing them, and alert only when the count **grows**. |
 | **Notifications without content** | A summary says "412 files, 38 GB evicted", not which clients or projects. Push services are third parties. |
 
 ### NAS-specific traps
 
 - **Case and locale folding differ.** An SMB server may treat two names as the same file while APFS
-  treats them as different (e.g. the Turkish `ı`/`I` pair). Detect such collisions before copying.
+  treats them as different (e.g. the Turkish `ı`/`I` pair: APFS does not fold `ı`, a Samba server that
+  compares in upper case does). The macOS SMB client then reports the second name as missing while writes
+  land on the first, so every run copies one file over the other and verification never passes. Detect such
+  collisions before copying (per folder, group by the NFC-normalised, upper-cased name), copy the second file
+  under an alias name (`--files-from` cannot rename — copy it on its own), and record the alias in the
+  manifest so that verify, evict and move tracking use it.
+- **One heavy NAS job at a time.** A second job on the same SMB server — even one that only lists and
+  renames, without checksums — cut uploads from about 26 MB/s to 2–4 MB/s; pausing it brought the speed
+  straight back. Enforce this in code (a shared lock the side job checks and yields to), not in a note.
+- **Backing up cloud-only files is a pipeline.** Evicted files have to come down from iCloud before they
+  can be copied. Work in batches (e.g. 20 GB): download batch *n + 1* while batch *n* is hashed and copied,
+  then evict batch *n* again in the background with several workers. Re-evicting one file at a time
+  (about 0.5 s each) left the NAS idle for 20–35 minutes per batch; 8 workers were about 6× faster.
+  Re-evicting uploads nothing — it only drops the local copy.
 - **`rsync --files-from`** treats lines starting with `#` as comments. Prefix every path with `./`.
 - **Use rsync 3.x** (e.g. from Homebrew). The `rsync` bundled with macOS is `openrsync`, which only speaks
   the old 2.6.9 protocol.
@@ -337,6 +351,7 @@ eventually either delete the only copy of something or quietly do nothing while 
 | Is it fully uploaded? | Foundation URL resource keys above. From Python without dependencies: `osascript -l JavaScript` with `ObjC.import("Foundation")`, many paths per call |
 | Evict | `brctl evict <path>`, or `FileManager.evictUbiquitousItem(at:)` |
 | Download | `brctl download <path>`, or `FileManager.startDownloadingUbiquitousItem(at:)` |
+| Will iCloud download it at all? | xattr `com.apple.macl` on an evicted file, read with `getxattr` (does not open the file or trigger a download) — see *Limits* |
 | Pinned (Keep Downloaded)? | xattr `com.apple.fileprovider.pinned#PX` on the item or any parent |
 | Finder tags | xattr `com.apple.metadata:_kMDItemUserTags` (a binary plist of tag names) |
 | Open by an app? | `lsof` on the path |
@@ -433,6 +448,17 @@ Build it in this order, and live with each step for a few days before the next:
   backup — keep an independent second copy (that is what the NAS step is for).
 - The Photos library is a separate world; use Photos' own "Optimize Mac Storage" for it.
 - `brctl` is undocumented; behaviour may change between macOS releases.
+- **Some evicted files do not come back down.** Files carrying the xattr `com.apple.macl` (macOS adds it
+  when a sandboxed app saved or was handed the file) got stuck: `brctl download` and
+  `startDownloadingUbiquitousItem` returned without error but nothing arrived, and reading the file returned
+  `EPERM`. 76 % of the stuck files had the tag, against 5 % of a random sample; overall about 2 % of the
+  archive. **The screen state and the origin matter:** in a small test with the screen locked none of 3 came down; with it
+  unlocked, every tagged file that had arrived via AirDrop, Preview, Photos, screenshots or with no
+  quarantine origin came down (32 of 32), while files saved by a sandboxed messaging app mostly did not
+  (2 of 11). So: read the origin from `com.apple.quarantine` (its third field names the app), try tagged
+  files only while the screen is unlocked, keep the stubborn ones out of the queue (each blocks a download
+  slot for its whole timeout), report them separately, and treat an older independent copy as possibly the
+  only reachable one.
 - A window only helps if the calendar is right. A forgotten event means a download on the day.
 
 ## Prior art (checked 31 Oct 2026)
