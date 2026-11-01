@@ -313,7 +313,7 @@ eventually either delete the only copy of something or quietly do nothing while 
 | **Quarantine the unknown** | A new kind of file name (a new prefix, a new extension) is not evicted for a few days, and you are told about it. |
 | **Network awareness** | Back up to the NAS only on the home network, identified by the NAS's **MAC address**, not by an IP that a café router may also hand out. Skip heavy work on a phone hotspot. |
 | **Sleep-safe scheduling** | `launchd` with `StartCalendarInterval` (runs missed while asleep are caught up) and `caffeinate -i` around the run. Add a dead-man switch: "no successful run for 3 days" is also an alert. |
-| **Known-permanent failures are their own class** | Some files can never be backed up (see *Limits*: tagged files iCloud will not download). If they count as "pending", no run ever succeeds: the short retry interval kicks in, every run sends a warning, and after a few days the dead-man switch fires daily — a real failure would drown in that noise. Count them separately, keep showing them, and alert only when the count **grows**. |
+| **Known-permanent failures are their own class** | Some files can never be backed up (see *Limits*: tagged files iCloud will not download). If they count as "pending", no run ever succeeds: the short retry interval kicks in, every run sends a warning, and after a few days the dead-man switch fires daily — a real failure would drown in that noise. Count them separately, keep showing them, and alert only when the count **grows**. If a copy filled in from elsewhere sits in the backup at the same path and size, count the file as backed up — marked as not verified against the source. |
 | **Notifications without content** | A summary says "412 files, 38 GB evicted", not which clients or projects. Push services are third parties. |
 
 ### NAS-specific traps
@@ -333,6 +333,9 @@ eventually either delete the only copy of something or quietly do nothing while 
   then evict batch *n* again in the background with several workers. Re-evicting one file at a time
   (about 0.5 s each) left the NAS idle for 20–35 minutes per batch; 8 workers were about 6× faster.
   Re-evicting uploads nothing — it only drops the local copy.
+- **Parallel renames into one folder can fail.** Eight copy workers, each writing to a temporary name and
+  renaming it into the same folder, got `EIO` on about 2 % of the renames on an SMB share; retrying those
+  one by one succeeded. Keep the temporary file, report it, and retry sequentially.
 - **`rsync --files-from`** treats lines starting with `#` as comments. Prefix every path with `./`.
 - **Use rsync 3.x** (e.g. from Homebrew). The `rsync` bundled with macOS is `openrsync`, which only speaks
   the old 2.6.9 protocol.
@@ -351,7 +354,7 @@ eventually either delete the only copy of something or quietly do nothing while 
 | Is it fully uploaded? | Foundation URL resource keys above. From Python without dependencies: `osascript -l JavaScript` with `ObjC.import("Foundation")`, many paths per call |
 | Evict | `brctl evict <path>`, or `FileManager.evictUbiquitousItem(at:)` |
 | Download | `brctl download <path>`, or `FileManager.startDownloadingUbiquitousItem(at:)` |
-| Will iCloud download it at all? | xattr `com.apple.macl` on an evicted file, read with `getxattr` (does not open the file or trigger a download) — see *Limits* |
+| Will iCloud download it at all? | The origin in xattr `com.apple.quarantine` (third field: the app that saved the file) and xattr `com.apple.macl`, both read with `getxattr` (does not open the file or trigger a download); `fileproviderctl evaluate <path>` shows `isDownloadRequested` / `isDownloaded` / `isUploaded` — see *Limits* |
 | Pinned (Keep Downloaded)? | xattr `com.apple.fileprovider.pinned#PX` on the item or any parent |
 | Finder tags | xattr `com.apple.metadata:_kMDItemUserTags` (a binary plist of tag names) |
 | Open by an app? | `lsof` on the path |
@@ -448,17 +451,28 @@ Build it in this order, and live with each step for a few days before the next:
   backup — keep an independent second copy (that is what the NAS step is for).
 - The Photos library is a separate world; use Photos' own "Optimize Mac Storage" for it.
 - `brctl` is undocumented; behaviour may change between macOS releases.
-- **Some evicted files do not come back down.** Files carrying the xattr `com.apple.macl` (macOS adds it
-  when a sandboxed app saved or was handed the file) got stuck: `brctl download` and
-  `startDownloadingUbiquitousItem` returned without error but nothing arrived, and reading the file returned
-  `EPERM`. 76 % of the stuck files had the tag, against 5 % of a random sample; overall about 2 % of the
-  archive. **The screen state and the origin matter:** in a small test with the screen locked none of 3 came down; with it
-  unlocked, every tagged file that had arrived via AirDrop, Preview, Photos, screenshots or with no
-  quarantine origin came down (32 of 32), while files saved by a sandboxed messaging app mostly did not
-  (2 of 11). So: read the origin from `com.apple.quarantine` (its third field names the app), try tagged
-  files only while the screen is unlocked, keep the stubborn ones out of the queue (each blocks a download
-  slot for its whole timeout), report them separately, and treat an older independent copy as possibly the
-  only reachable one.
+- **Some evicted files do not come back down.** Files that a sandboxed messaging app saved into iCloud
+  Drive (their `com.apple.quarantine` names that app in its third field; many also carry `com.apple.macl`)
+  could not be downloaded by any route: `brctl download`, `startDownloadingUbiquitousItem`, Finder's
+  **Download Now** and opening the file in Preview all left `isDownloadRequested = 0` in
+  `fileproviderctl evaluate <path>` — the request was not even recorded — and reading returned `EPERM`,
+  although `isUploaded = 1` showed the content was in iCloud. The tag is not the marker, the origin is: a
+  few untagged files with that origin stayed stuck too, while tagged files from other origins (AirDrop,
+  Preview, Photos, screenshots, no quarantine record) all came down — **with the screen locked as well**
+  (an earlier 3-file test that pointed at the lock was too small). About 1 % of the archive. So: decide by
+  origin, keep these files out of the download queue (each blocks a slot for its whole timeout), count them
+  separately, and fill them in from another copy (next point).
+- **Filling in what iCloud will not give back.** Look for other copies: an older backup (match path + size —
+  modification times may not have survived its copy) and the phone's local backup (a messaging app keeps
+  the original media; in an unencrypted iOS backup a file lives at `<first 2 hex>/<SHA-1 of
+  "<domain>-<relative path>">`, and the app's message database gives the media path and its exact size).
+  Copy, verify by hash after copying, and mark the manifest entry as *matched by name + size, not verified
+  against the source*, so a later check can compare once the original becomes readable. Never write the
+  recovered copy back into the iCloud folder.
+- **Finder and Spotlight have their own limits here.** Finder offers **Download Now** only in an ordinary
+  folder window, not for files shown in a Smart Folder or search results. A Spotlight raw query with a few
+  hundred `||` clauses works; somewhere between 400 and 600 it fails silently (it returned the query text
+  instead of results) — split it.
 - A window only helps if the calendar is right. A forgotten event means a download on the day.
 
 ## Prior art (checked 31 Oct 2026)

@@ -318,7 +318,7 @@ bir şeyin tek kopyasını siler ya da başarı raporlarken sessizce hiçbir şe
 | **Bilinmeyeni karantinaya al** | Yeni bir dosya adı türü (yeni bir önek, yeni bir uzantı) birkaç gün evict edilmez ve sana haber verilir. |
 | **Ağ farkındalığı** | NAS'a yalnız ev ağında yedekle; ev ağını bir kafedeki modemin de dağıtabileceği IP'yle değil, NAS'ın **MAC adresiyle** tanı. Telefon hotspot'unda ağır işi atla. |
 | **Uykuya dayanıklı zamanlama** | `launchd` ile `StartCalendarInterval` (uykuda kaçan koşu uyanınca telafi edilir) ve koşunun çevresinde `caffeinate -i`. Bir ölü adam anahtarı ekle: "3 gündür başarılı koşu yok" da bir uyarıdır. |
-| **Kalıcı ve bilinen hatalar ayrı bir sınıftır** | Bazı dosyalar hiç yedeklenemez (bkz. *Sınırlar*: iCloud'un indirmediği etiketli dosyalar). "Bekleyen" sayılırlarsa hiçbir koşu başarılı olmaz: kısa yeniden deneme aralığı devreye girer, her koşu uyarı gönderir, birkaç gün sonra ölü adam anahtarı her gün öter — gerçek bir arıza bu gürültüde kaybolur. Onları ayrı say, göstermeye devam et, yalnız sayıları **artınca** uyar. |
+| **Kalıcı ve bilinen hatalar ayrı bir sınıftır** | Bazı dosyalar hiç yedeklenemez (bkz. *Sınırlar*: iCloud'un indirmediği etiketli dosyalar). "Bekleyen" sayılırlarsa hiçbir koşu başarılı olmaz: kısa yeniden deneme aralığı devreye girer, her koşu uyarı gönderir, birkaç gün sonra ölü adam anahtarı her gün öter — gerçek bir arıza bu gürültüde kaybolur. Onları ayrı say, göstermeye devam et, yalnız sayıları **artınca** uyar. Başka bir yerden tamamlanmış bir kopyası yedekte aynı yol ve boyutta duruyorsa dosyayı yedekli say — kaynakla doğrulanmadığı işaretiyle. |
 | **İçeriksiz bildirim** | Özet "412 dosya, 38 GB evict edildi" der; hangi müşteri ya da proje olduğunu söylemez. Bildirim servisleri üçüncü taraftır. |
 
 ### NAS'a özgü tuzaklar
@@ -337,6 +337,9 @@ bir şeyin tek kopyasını siler ya da başarı raporlarken sessizce hiçbir şe
   sonra *n*. partiyi arka planda birkaç işçiyle yeniden evict et. Dosyaları tek tek yeniden evict etmek (dosya
   başına ~0,5 sn) NAS'ı her partide 20–35 dakika boş bıraktı; 8 işçi yaklaşık 6 kat hızlıydı. Yeniden evict
   hiçbir şey yüklemez — yalnız yerel kopyayı atar.
+- **Aynı klasöre paralel yeniden adlandırma başarısız olabilir.** Her biri geçici bir ada yazıp aynı klasöre
+  yeniden adlandıran sekiz kopyalama işçisi, bir SMB paylaşımında yeniden adlandırmaların yaklaşık %2'sinde
+  `EIO` aldı; bunlar tek tek yeniden denenince geçti. Geçici dosyayı bırak, raporla, sırayla yeniden dene.
 - **`rsync --files-from`** `#` ile başlayan satırları yorum sayar. Her yolun başına `./` koy.
 - **rsync 3.x kullan** (ör. Homebrew'dan). macOS'la gelen `rsync` aslında `openrsync`'tir ve yalnız eski
   2.6.9 protokolünü konuşur.
@@ -355,7 +358,7 @@ bir şeyin tek kopyasını siler ya da başarı raporlarken sessizce hiçbir şe
 | Tam yüklendi mi? | Yukarıdaki Foundation URL kaynak anahtarları. Python'dan bağımlılıksız: `osascript -l JavaScript` + `ObjC.import("Foundation")`, tek çağrıda çok yol |
 | Evict | `brctl evict <yol>` ya da `FileManager.evictUbiquitousItem(at:)` |
 | İndir | `brctl download <yol>` ya da `FileManager.startDownloadingUbiquitousItem(at:)` |
-| iCloud bunu hiç indirir mi? | Evict edilmiş dosyada `com.apple.macl` xattr'ı; `getxattr` ile oku (dosyayı açmaz, indirme tetiklemez) — bkz. *Sınırlar* |
+| iCloud bunu hiç indirir mi? | `com.apple.quarantine` xattr'ındaki kaynak (üçüncü alan: dosyayı kaydeden uygulama) ve `com.apple.macl` xattr'ı; ikisi de `getxattr` ile okunur (dosyayı açmaz, indirme tetiklemez); `fileproviderctl evaluate <yol>` `isDownloadRequested` / `isDownloaded` / `isUploaded` gösterir — bkz. *Sınırlar* |
 | Pinli mi (İndirilmiş Tut)? | Öğenin kendisinde ya da bir üst klasörde `com.apple.fileprovider.pinned#PX` xattr'ı |
 | Finder etiketleri | `com.apple.metadata:_kMDItemUserTags` xattr'ı (etiket adlarından oluşan ikili bir plist) |
 | Bir uygulama açık tutuyor mu? | yol üzerinde `lsof` |
@@ -452,16 +455,26 @@ Bu sırayla kur ve bir sonrakine geçmeden her adımla birkaç gün yaşa:
 - Fotoğraflar kütüphanesi ayrı bir dünyadır; onun için Fotoğraflar'ın kendi "Mac Depolamasını Optimize
   Et" ayarını kullan.
 - `brctl` belgelenmemiştir; davranışı macOS sürümleri arasında değişebilir.
-- **Bazı evict'li dosyalar geri inmez.** `com.apple.macl` xattr'ını taşıyan dosyalar (korumalı alanda çalışan
-  bir uygulama dosyayı kaydettiğinde ya da dosya ona verildiğinde macOS koyar) takıldı: `brctl download` ve
-  `startDownloadingUbiquitousItem` hatasız döndü ama hiçbir şey inmedi; dosyayı okumak `EPERM` verdi. Takılan
-  dosyaların %76'sında etiket vardı, rastgele bir örneklemde %5'inde; arşivin toplamda yaklaşık %2'si.
-  **Ekranın durumu ve dosyanın kaynağı belirleyici:** ekran kilitliyken yapılan küçük denemede 3 dosyanın hiçbiri inmedi; kilit açıkken AirDrop,
-  Önizleme, Fotoğraflar, ekran görüntüsü kaynaklı ya da karantina kaydı olmayan etiketli dosyaların hepsi indi
-  (32/32), korumalı alanda çalışan bir mesajlaşma uygulamasının kaydettikleri ise çoğunlukla inmedi (2/11).
-  Yani: kaynağı `com.apple.quarantine`'den oku (üçüncü alan uygulamanın adıdır), etiketli dosyaları yalnız ekran
-  açıkken dene, inatçı olanları kuyruğa koyma (her biri zaman aşımı boyunca bir indirme yerini tıkar), ayrı
-  raporla ve eski bağımsız bir kopyayı erişilebilir tek kopya olabilir diye koru.
+- **Bazı evict'li dosyalar geri inmez.** Korumalı alanda çalışan bir mesajlaşma uygulamasının iCloud Drive'a
+  kaydettiği dosyalar (`com.apple.quarantine`'in üçüncü alanında o uygulamanın adı yazar; çoğunda
+  `com.apple.macl` de vardır) hiçbir yolla inmedi: `brctl download`, `startDownloadingUbiquitousItem`, Finder'ın
+  **Şimdi İndir** komutu ve dosyayı Önizleme'de açmak — dördünde de `fileproviderctl evaluate <yol>` çıktısında
+  `isDownloadRequested = 0` kaldı (istek kaydedilmedi bile), dosyayı okumak `EPERM` verdi; oysa `isUploaded = 1`
+  içeriğin iCloud'da olduğunu gösteriyordu. Belirleyici etiket değil, kaynaktır: o kaynaktan gelen birkaç
+  etiketsiz dosya da takıldı; başka kaynaklı (AirDrop, Önizleme, Fotoğraflar, ekran görüntüsü, karantina kaydı
+  olmayan) etiketli dosyaların hepsi indi — **ekran kilitliyken de** (kilidi işaret eden önceki 3 dosyalık deneme
+  küçüktü). Arşivin yaklaşık %1'i. Yani: kaynağa göre karar ver, bu dosyaları indirme kuyruğuna koyma (her biri
+  zaman aşımı boyunca bir indirme yerini tıkar), ayrı say ve başka bir kopyadan tamamla (sonraki madde).
+- **iCloud'un geri vermediğini tamamlamak.** Başka kopyalara bak: eski bir yedek (yol + boyut eşleşmesi —
+  değişiklik tarihleri o yedeğin kopyasında korunmamış olabilir) ve telefonun yerel yedeği (mesajlaşma
+  uygulaması asıl medyayı tutar; şifresiz bir iOS yedeğinde dosya `<ilk 2 hex>/<"<alan>-<göreli yol>"un SHA-1'i>`
+  yolundadır, uygulamanın mesaj veritabanı medya yolunu ve tam boyutunu verir). Kopyala, kopyadan sonra
+  özetle doğrula ve manifest kaydını *ad + boyutla eşleşti, kaynakla doğrulanmadı* diye işaretle ki asıl dosya
+  okunabilir olduğunda sonraki bir denetim kıyaslayabilsin. Kurtarılan kopyayı asla iCloud klasörüne geri yazma.
+- **Finder'ın ve Spotlight'ın burada kendi sınırları var.** Finder **Şimdi İndir**'i yalnız normal bir klasör
+  penceresinde gösterir; Akıllı Klasör ya da arama sonucundaki dosyalarda göstermez. Birkaç yüz `||` koşullu bir
+  Spotlight ham sorgusu çalışır; 400 ile 600 arasında bir yerde sessizce bozulur (sonuç yerine sorgu metnini
+  döndürdü) — sorguyu böl.
 - Pencere ancak takvim doğruysa işe yarar. Unutulmuş bir etkinlik, o gün indirme beklemek demektir.
 
 ## Benzer çalışmalar (31.10.2026'da bakıldı)
